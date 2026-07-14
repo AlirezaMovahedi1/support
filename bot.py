@@ -90,10 +90,20 @@ def get_relevant_context(query, kb_data):
     # Return top 2 matching documents
     return [item[0] for item in matches_scores[:2]]
 
-def generate_response(query):
+def generate_response(query, image_path=None):
     kb_data = load_knowledge_base()
-    matched_docs = get_relevant_context(query, kb_data)
     
+    # Get standard textual context
+    # If query is empty but we have an image, search for general troubleshooting context
+    search_query = query if query else "خرابی اتصال اسکرین شات ارور"
+    matched_docs = get_relevant_context(search_query, kb_data)
+    
+    # If we have an image, ensure troubleshooting_visual.md is in context
+    if image_path:
+        visual_doc = next((d for d in kb_data if d['filename'] == 'troubleshooting_visual.md'), None)
+        if visual_doc and visual_doc not in matched_docs:
+            matched_docs.append(visual_doc)
+            
     # Construct context block
     context_blocks = []
     for doc in matched_docs:
@@ -104,9 +114,13 @@ def generate_response(query):
     system_instruction = (
         "You are a professional customer support AI agent for X2Ray VPN. "
         "Your goal is to answer the customer's query accurately and politely using ONLY the provided Context.\n"
+        "You may be provided with a text query, a screenshot image, or both.\n"
+        "If they send an image, use the visual troubleshooting guide (troubleshooting_visual.md) to inspect the screenshot. "
+        "Analyze what app they are using (v2rayNG or V2Box), identify the visual error (e.g. no config selected, switch off, expired), "
+        "and provide step-by-step guidance in Persian.\n"
         "If the customer is asking for prices, show the pricing table from the pricing document.\n"
         "If they ask for support, payment details, or tutorials, use the respective documents.\n"
-        "If the query cannot be answered by the context (for example, specific user order issues, custom questions), "
+        "If the query or visual error cannot be answered by the context, "
         "politely guide them and say that a human support agent will review their request soon.\n\n"
         "Guidelines:\n"
         "- Reply in Persian (Farsi).\n"
@@ -116,12 +130,27 @@ def generate_response(query):
         f"Context:\n{context}"
     )
     
+    contents = []
+    if query:
+        contents.append(query)
+    else:
+        # Default text query if only image is provided
+        contents.append("لطفا این اسکرین‌شات از برنامه فیلترشکن را بررسی کرده و راهنمایی کنید.")
+        
+    if image_path:
+        try:
+            import PIL.Image
+            img = PIL.Image.open(image_path)
+            contents.append(img)
+        except Exception as e:
+            print(f"Error loading image: {e}")
+            
     try:
         model = genai.GenerativeModel(
             model_name="gemini-2.5-flash",
             system_instruction=system_instruction
         )
-        response = model.generate_content(contents=query)
+        response = model.generate_content(contents=contents)
         return response.text
     except Exception as e:
         return f"❌ Error generating response: {e}"

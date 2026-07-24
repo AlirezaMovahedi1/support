@@ -85,9 +85,30 @@ def mock_bot_respond(query):
     else:
         print("⚠️ No direct match in knowledge base. The bot would fallback to generic support greeting.")
 
+def run_automated_tests():
+    print("🧪 Starting Automated Test Suite for Support Bot...")
+    test_queries = [
+        ("سلام قیمت پلن ها چنده؟", "pricing.md"),
+        ("من گوشیم ایفونه چجوری وصل بشم؟", "ios_setup.md"),
+        ("رو همراه اول کار نمیکنه قطعه", "troubleshooting.md"),
+        ("شماره کارت میدی برای تمدید؟", "payment.md"),
+        ("برای ویندوز برنامه نکو ری رو چطور نصب کنم؟", "windows_setup.md"),
+    ]
+    
+    kb_data = load_knowledge_base()
+    passed = 0
+    
+    for query, expected_doc in test_queries:
+        best_doc, score = find_context(query, kb_data)
+        doc_name = best_doc['filename'] if best_doc else None
+        
+        if doc_name == expected_doc:
+            print(f"✅ Pass: Query '{query}' matched expected '{expected_doc}' (Score: {score})")
+            passed += 1
+        else:
+            print(f"❌ Fail: Query '{query}' matched '{doc_name}' instead of expected '{expected_doc}'")
+            
+    print(f"\n📊 Summary: {passed}/{len(test_queries)} tests passed.")
+
 if __name__ == "__main__":
-    # Test queries
-    mock_bot_respond("سلام قیمت پلن ها چنده؟")
-    mock_bot_respond("من گوشیم ایفونه چجوری وصل بشم؟")
-    mock_bot_respond("رو همراه اول کار نمیکنه قطعه")
-    mock_bot_respond("شماره کارت میدی برای تمدید؟")
+    run_automated_tests()

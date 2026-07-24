@@ -21,6 +21,28 @@ genai.configure(api_key=api_key)
 
 KB_DIR = "knowledge_base"
 
+def parse_md_file(path, filename):
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+    
+    yaml_meta = {}
+    body = content
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            yaml_str = parts[1]
+            body = parts[2]
+            for line in yaml_str.split("\n"):
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    yaml_meta[k.strip()] = v.strip()
+    
+    return {
+        "filename": filename,
+        "meta": yaml_meta,
+        "body": body
+    }
+
 def load_knowledge_base():
     kb_data = []
     if not os.path.exists(KB_DIR):
@@ -30,26 +52,7 @@ def load_knowledge_base():
     for filename in os.listdir(KB_DIR):
         if filename.endswith(".md"):
             path = os.path.join(KB_DIR, filename)
-            with open(path, "r", encoding="utf-8") as f:
-                content = f.read()
-            
-            yaml_meta = {}
-            body = content
-            if content.startswith("---"):
-                parts = content.split("---", 2)
-                if len(parts) >= 3:
-                    yaml_str = parts[1]
-                    body = parts[2]
-                    for line in yaml_str.split("\n"):
-                        if ":" in line:
-                            k, v = line.split(":", 1)
-                            yaml_meta[k.strip()] = v.strip()
-            
-            kb_data.append({
-                "filename": filename,
-                "meta": yaml_meta,
-                "body": body
-            })
+            kb_data.append(parse_md_file(path, filename))
     return kb_data
 
 def get_relevant_context(query, kb_data):

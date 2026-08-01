@@ -1,7 +1,7 @@
 ---
 title: راهنمای راه‌اندازی و اتصال در سیستم‌عامل iOS (آیفون و آیپد)
 type: tutorial
-tags: [آیفون, ios, نرم‌افزار, v2box, shadowrocket, happ, آموزش]
+tags: [آیفون, ایفون, ios, نرم‌افزار, v2box, shadowrocket, happ, آموزش]
 last_updated: 2026-07-14
 ---
 # راهنمای اتصال در آیفون (iOS)

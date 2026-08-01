@@ -39,24 +39,39 @@ def load_knowledge_base():
     return kb_data
 
 def find_context(query, kb_data):
-    # Simple keyword matching for demo/prototype
-    query_words = set(re.findall(r'\w+', query.lower()))
-    best_doc = None
-    max_matches = 0
+    query = query.lower()
+    matches_scores = []
     
     for doc in kb_data:
         meta_str = " ".join(doc["meta"].values()).lower()
-        tags_str = doc["meta"].get("tags", "").lower()
+        tags_str = doc["meta"].get("tags", "").replace("[", "").replace("]", "").replace("'", "").lower()
         body_str = doc["body"].lower()
-        
         full_text = f"{meta_str} {tags_str} {body_str}"
-        matches = sum(1 for word in query_words if word in full_text)
         
-        if matches > max_matches:
-            max_matches = matches
-            best_doc = doc
+        score = 0
+        tags_list = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
+        
+        # 1. Substring matching of tags in the query
+        for tag in tags_list:
+            if tag in query:
+                score += 5
+                
+        # 2. General term matching
+        query_terms = [t for t in re.findall(r'\w+', query) if len(t) > 2]
+        for term in query_terms:
+            if term in full_text:
+                score += 1
+            for tag in tags_list:
+                if term in tag or tag in term:
+                    score += 2
+                    
+        if score > 0:
+            matches_scores.append((doc, score))
             
-    return best_doc, max_matches
+    matches_scores.sort(key=lambda x: x[1], reverse=True)
+    if matches_scores:
+        return matches_scores[0][0], matches_scores[0][1]
+    return None, 0
 
 def mock_bot_respond(query):
     kb_data = load_knowledge_base()

@@ -3,3 +3,4 @@ DataExport_2026-07-05/
 __pycache__/
 *.pyc
 qa_dataset.json
+chat_memory.db

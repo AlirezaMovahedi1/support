@@ -1,6 +1,8 @@
 import os
 import sys
 import re
+import sqlite3
+import json
 import google.generativeai as genai
 from dotenv import load_dotenv
 
@@ -20,6 +22,67 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 KB_DIR = "knowledge_base"
+DB_PATH = "chat_memory.db"
+
+class ChatMemoryManager:
+    """Manages persistent chat history per user using SQLite database."""
+    
+    def __init__(self, db_path=DB_PATH):
+        self.db_path = db_path
+        self._init_db()
+        
+    def _init_db(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS message_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            conn.commit()
+
+    def get_user_history(self, user_id, limit=10):
+        """Retrieves recent conversation history for a given user_id."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT role, content FROM message_history
+                WHERE user_id = ?
+                ORDER BY id DESC LIMIT ?
+            """, (str(user_id), limit))
+            rows = cursor.fetchall()
+            
+        history = []
+        for role, content in reversed(rows):
+            history.append({
+                "role": role,
+                "parts": [content]
+            })
+        return history
+
+    def add_message(self, user_id, role, content):
+        """Appends a user or model message to history."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO message_history (user_id, role, content)
+                VALUES (?, ?, ?)
+            """, (str(user_id), role, content))
+            conn.commit()
+
+    def clear_user_history(self, user_id):
+        """Clears memory for a specific user."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM message_history WHERE user_id = ?", (str(user_id),))
+            conn.commit()
+
+# Initialize Global Memory Manager
+memory_manager = ChatMemoryManager()
 
 def parse_md_file(path, filename):
     with open(path, "r", encoding="utf-8") as f:
@@ -66,20 +129,15 @@ def get_relevant_context(query, kb_data):
         full_text = f"{meta_str} {tags_str} {body_str}"
         
         score = 0
-        
-        # 1. Substring matching of tags in the query
-        # This solves "آیفونه" matching "آیفون" because "آیفون" is in "آیفونه"
         tags_list = [tag.strip() for tag in tags_str.split(",") if tag.strip()]
         for tag in tags_list:
             if tag in query:
-                score += 5  # High weight for tag matches
+                score += 5
                 
-        # 2. General term matching
         query_terms = [t for t in re.findall(r'\w+', query) if len(t) > 2]
         for term in query_terms:
             if term in full_text:
                 score += 1
-            # Check if doc tags contain the query term as a substring
             for tag in tags_list:
                 if term in tag or tag in term:
                     score += 2
@@ -87,27 +145,27 @@ def get_relevant_context(query, kb_data):
         if score > 0:
             matches_scores.append((doc, score))
             
-    # Sort by score descending
     matches_scores.sort(key=lambda x: x[1], reverse=True)
-    
-    # Return top 2 matching documents
     return [item[0] for item in matches_scores[:2]]
 
-def generate_response(query, image_path=None):
+def generate_response(query, image_path=None, user_id="default_user"):
+    """Generates response taking user's previous conversation history into account."""
     kb_data = load_knowledge_base()
     
-    # Get standard textual context
-    # If query is empty but we have an image, search for general troubleshooting context
-    search_query = query if query else "خرابی اتصال اسکرین شات ارور"
+    # Retrieve user's previous history from SQLite memory
+    history = memory_manager.get_user_history(user_id=user_id, limit=10)
+    
+    # Combine query + user history for context search if query is brief
+    history_text = " ".join([h["parts"][0] for h in history if isinstance(h["parts"][0], str)])
+    search_query = f"{query} {history_text}".strip() if query else "خرابی اتصال اسکرین شات ارور"
+    
     matched_docs = get_relevant_context(search_query, kb_data)
     
-    # If we have an image, ensure troubleshooting_visual.md is in context
     if image_path:
         visual_doc = next((d for d in kb_data if d['filename'] == 'troubleshooting_visual.md'), None)
         if visual_doc and visual_doc not in matched_docs:
             matched_docs.append(visual_doc)
             
-    # Construct context block
     context_blocks = []
     for doc in matched_docs:
         context_blocks.append(f"Document ({doc['meta'].get('title', doc['filename'])}):\n{doc['body'].strip()}")
@@ -122,8 +180,9 @@ def generate_response(query, image_path=None):
         "۲. به هیچ عنوان از کلمات کتابی، رسمی و اداری استفاده نکن (مثلاً به جای «جهت»، «فرآیند»، «ملاحظه فرمایید»، «ارسال نمایید» از «واسه»، «ببین»، «بفرست»، «بررسی کن» استفاده کن).\n"
         "۳. سلام و احوال‌پرسی‌های تکراری و اداری نده. با کلماتی مثل «سلام عزیزم»، «سلام داداش وقتت بخیر»، «سلام جانم» یا «سلام وقت بخیر ❤️» شروع کن.\n"
         "۴. پاسخ‌ها را کوتاه، روان و ساده بنویس. از شماره‌گذاری‌های رسمی زیاد یا بولت‌پوینت‌های خیلی طولانی کتابی پرهیز کن.\n"
-        "۵. در صورت ارسال اسکرین‌شات، مانند یک ادمین باتجربه عیب برنامه (v2rayNG یا V2Box) را روی عکس ببین و خیلی ساده و عامیانه راهنمایی‌اش کن.\n"
-        "۶. اگر شماره کارت یا تلفن خواسته شد، مقادیر حساس را سانسور کن.\n\n"
+        "۵. سابقه چت قبلی مشتری را حتماً مد نظر قرار بده. اگر قبلاً مدل گوشی، اپراتور یا مشکلی را گفته، نیاز به پرسش دوباره نیست و بر همان اساس پاسخ بده.\n"
+        "۶. در صورت ارسال اسکرین‌شات، مانند یک ادمین باتجربه عیب برنامه (v2rayNG یا V2Box) را روی عکس ببین و خیلی ساده و عامیانه راهنمایی‌اش کن.\n"
+        "۷. اگر شماره کارت یا تلفن خواسته شد، مقادیر حساس را سانسور کن.\n\n"
         "نمونه پاسخ‌های واقعی ادمین تلگرام:\n"
         "- مشتری: قیمت چند؟\n"
         "  ادمین: سلام عزیزم وقتت بخیر ❤️\n"
@@ -132,8 +191,6 @@ def generate_response(query, image_path=None):
         "  کدوم مد نظرت هست برات ثبت کنم؟\n\n"
         "- مشتری: وصلم ولی اینترنت ندارم\n"
         "  ادمین: سلام جانم، یه اسکرین‌شات از داخل برنامه‌ت میفرستی ببینم سروری که انتخابی داری پینگ میده یا نه؟\n\n"
-        "- مشتری: برای آیفون چجوری نصب کنم؟\n"
-        "  ادمین: سلام داداش، برنامه V2Box رو از اپ استور دانلود کن لینک اشتراکت رو برام بفرست یا بزن تو برنامه کپی کن وصل شی 👌\n\n"
         f"پایگاه دانش (اطلاعات مرجع):\n{context}"
     )
     
@@ -141,7 +198,6 @@ def generate_response(query, image_path=None):
     if query:
         contents.append(query)
     else:
-        # Default text query if only image is provided
         contents.append("لطفا این اسکرین‌شات از برنامه فیلترشکن را بررسی کرده و راهنمایی کنید.")
         
     if image_path:
@@ -157,14 +213,25 @@ def generate_response(query, image_path=None):
             model_name="gemini-2.5-flash",
             system_instruction=system_instruction
         )
-        response = model.generate_content(contents=contents)
+        
+        # Start chat with loaded history
+        chat = model.start_chat(history=history)
+        response = chat.send_message(contents)
+        
+        # Save new user query and model reply to SQLite memory
+        user_msg = query if query else "[ارسال تصویر اسکرین‌شات]"
+        memory_manager.add_message(user_id=user_id, role="user", content=user_msg)
+        memory_manager.add_message(user_id=user_id, role="model", content=response.text)
+        
         return response.text
     except Exception as e:
         return f"❌ Error generating response: {e}"
 
 if __name__ == "__main__":
-    print("🤖 X2Ray Support Chatbot is running!")
+    print("🤖 X2Ray Support Chatbot (with Persistent User Memory) is running!")
     print("Type your message and press Enter (type 'exit' to quit).\n")
+    
+    current_user = "cli_demo_user"
     
     while True:
         try:
@@ -176,7 +243,7 @@ if __name__ == "__main__":
             if not user_input.strip():
                 continue
                 
-            response = generate_response(user_input)
+            response = generate_response(user_input, user_id=current_user)
             print(f"AI Bot: {response}\n")
             
         except KeyboardInterrupt:

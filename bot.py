@@ -148,9 +148,41 @@ def get_relevant_context(query, kb_data):
     matches_scores.sort(key=lambda x: x[1], reverse=True)
     return [item[0] for item in matches_scores[:2]]
 
+def detect_user_intent(query, has_image=False):
+    """Classifies user intent into distinct categories for targeted handling."""
+    if has_image:
+        return "TROUBLESHOOTING_VISUAL"
+        
+    query_clean = query.lower().strip()
+    
+    # Intent 1: Price Request
+    if any(k in query_clean for k in ["چنده", "چند", "قیمت", "هزینه", "پلن", "تعرفه", "چقدر میشه", "قیمتش"]):
+        return "PRICE_REQUEST"
+        
+    # Intent 2: Order / Purchase Request
+    if any(k in query_clean for k in ["بفرست", "خرید", "میخوام", "می‌خوام", "ثبت کن", "اکانت میخوام", "اشتراک میخوام", "تست بده", "تست برام", "یک ماهه"]):
+        return "ORDER_REQUEST"
+        
+    # Intent 3: Payment / Card Info
+    if any(k in query_clean for k in ["کارت", "شماره کارت", "واریز", "فیش", "پرداخت", "حساب"]):
+        return "PAYMENT_INFO"
+
+    # Intent 4: Connection / Troubleshooting
+    if any(k in query_clean for k in ["قطعه", "قطع", "کار نمیکنه", "وصل نمیشه", "پینگ نمیده", "ارور", "خرابه", "کند"]):
+        return "TROUBLESHOOTING"
+
+    # Intent 5: Setup Tutorial / Download
+    if any(k in query_clean for k in ["آموزش", "برنامه", "دانلود", "نصب", "چجوری وصل شم", "چطور"]):
+        return "TUTORIAL"
+
+    return "GENERAL"
+
 def generate_response(query, image_path=None, user_id="default_user"):
-    """Generates response taking user's previous conversation history into account."""
+    """Generates response taking user's intent and conversation history into account."""
     kb_data = load_knowledge_base()
+    
+    # Classify User Intent
+    intent = detect_user_intent(query, has_image=bool(image_path))
     
     # Retrieve user's previous history from SQLite memory
     history = memory_manager.get_user_history(user_id=user_id, limit=10)
@@ -172,9 +204,25 @@ def generate_response(query, image_path=None, user_id="default_user"):
         
     context = "\n\n---\n\n".join(context_blocks) if context_blocks else "هیچ فایل راهنمای مستقیمی در پایگاه دانش یافت نشد."
     
+    # Intent-specific behavioral instruction
+    intent_guidance = ""
+    if intent == "PRICE_REQUEST":
+        intent_guidance = "قصد مشتری: قیمت می‌خواهد. لیست پکیج‌های قیمت را خیلی کوتاه با ایموجی بفرست و آخرش بپرس کدام حجم مد نظرش است."
+    elif intent == "ORDER_REQUEST":
+        intent_guidance = "قصد مشتری: قصد خرید یا سفارش دارد. او را تشویق کن، مشخصات سیستم‌عاملش را بپرس یا راهنمایی و شماره کارت پرداخت ارائه بده."
+    elif intent == "PAYMENT_INFO":
+        intent_guidance = "قصد مشتری: اطلاعات کارت یا واریز می‌خواهد. راهنمایی پرداخت و شماره کارت را بده و بگو فیش را بفرستد."
+    elif intent == "TROUBLESHOOTING_VISUAL" or intent == "TROUBLESHOOTING":
+        intent_guidance = "قصد مشتری: مشکل اتصال دارد. با دقت راه‌حل رفع مشکل یا درخواست اسکرین‌شات از برنامه را بده."
+    elif intent == "TUTORIAL":
+        intent_guidance = "قصد مشتری: آموزش راه‌اندازی می‌خواهد. اسم برنامه مناسب سیستم‌عاملش را ساده و گام‌به‌گام بگو."
+    else:
+        intent_guidance = "قصد مشتری: گفتگو عمومی یا سوال عادی پشتیبانی است."
+
     system_instruction = (
         "تو ادمین واقعی و پشتیبان فنی انسان در تلگرام برای فروشگاه X2Ray VPN هستی.\n"
         "مشتری نباید تحت هیچ شرایطی متوجه شود که با هوش مصنوعی صحبت می‌کند.\n\n"
+        f"🎯 [تحلیل قصد مشتری در این پیام]: {intent} -> {intent_guidance}\n\n"
         "دستورالعمل لحن و فرمت پاسخ‌دهی:\n"
         "۱. لحن کاملاً صمیمی، دوستانه، عامیانه و تلگرامی داشته باش (مثل یک ادمین جوان و خوش‌برخورد).\n"
         "۲. به هیچ عنوان از کلمات کتابی، رسمی و اداری استفاده نکن (مثلاً به جای «جهت»، «فرآیند»، «ملاحظه فرمایید»، «ارسال نمایید» از «واسه»، «ببین»، «بفرست»، «بررسی کن» استفاده کن).\n"
@@ -223,12 +271,18 @@ def generate_response(query, image_path=None, user_id="default_user"):
         memory_manager.add_message(user_id=user_id, role="user", content=user_msg)
         memory_manager.add_message(user_id=user_id, role="model", content=response.text)
         
-        return response.text
+        return {
+            "intent": intent,
+            "response": response.text
+        }
     except Exception as e:
-        return f"❌ Error generating response: {e}"
+        return {
+            "intent": intent,
+            "response": f"❌ Error generating response: {e}"
+        }
 
 if __name__ == "__main__":
-    print("🤖 X2Ray Support Chatbot (with Persistent User Memory) is running!")
+    print("🤖 X2Ray Support Chatbot (with Intent Classifier & Memory) is running!")
     print("Type your message and press Enter (type 'exit' to quit).\n")
     
     current_user = "cli_demo_user"
@@ -243,8 +297,9 @@ if __name__ == "__main__":
             if not user_input.strip():
                 continue
                 
-            response = generate_response(user_input, user_id=current_user)
-            print(f"AI Bot: {response}\n")
+            result = generate_response(user_input, user_id=current_user)
+            print(f"🎯 Detected Intent: {result['intent']}")
+            print(f"AI Bot: {result['response']}\n")
             
         except KeyboardInterrupt:
             print("\nGoodbye!")
